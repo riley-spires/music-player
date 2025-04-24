@@ -1,0 +1,16 @@
+# Don't commit music
+**/*.mp3
+**/*.wav
+**/*.ogg
+**/*.qoa
+**/*.xm
+**/*.mod
+**/*.flac
+**/*.FLAC
+
+# Libraries
+**/*.a
+**/*.so
+
+# Binaries
+music-player
