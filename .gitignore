@@ -9,6 +9,7 @@
 **/*.FLAC
 
 # Libraries
+**/*.o
 **/*.a
 **/*.so
 
