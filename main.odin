@@ -98,19 +98,27 @@ toggle_music :: proc(state: ^State) {
 }
 
 handle_input :: proc(state: ^State) {
+    // Make buttons invisible
+    rl.GuiSetAlpha(0)
+
     // Always wanted keybinds
     if rl.IsKeyPressed(rl.KeyboardKey.O) {
         load_music(state)
     }   
 
     // Keybinds depending upon application status
+    // Center button
+    x := state.center.x - 50
+    y := state.center.y - 50
+    height := state.center.y + 50 - y
+    width := state.center.x + 50 - x
     switch state.status {
         case ApplicationStatus.UNLOADED:
-            if rl.IsMouseButtonPressed(rl.MouseButton.LEFT) {
+            if rl.GuiButton({x, y, width, height}, "") {
                 load_music(state)
             }
         case ApplicationStatus.LOADED:
-            if rl.IsMouseButtonPressed(rl.MouseButton.LEFT) || rl.IsKeyPressed(rl.KeyboardKey.SPACE) || rl.IsKeyPressed(rl.KeyboardKey.K) {
+            if rl.GuiButton({x, y, width, height}, "") {
                 toggle_music(state)
             }
     }
