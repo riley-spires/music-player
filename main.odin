@@ -1,6 +1,8 @@
 package main
 
 import "core:fmt"
+import "core:strings"
+
 import tfd "tinyfiledialogs/tinyfiledialogs-generated-bindings"
 import rl "vendor:raylib"
 
@@ -8,9 +10,18 @@ BACKGROUND_COLOR : rl.Color : {85, 85, 85, 255}
 PLAY_PAUSE_COLOR : rl.Color : {155, 155, 155, 200}
 PROGRESS_BAR_COLOR : rl.Color : {255, 120, 120, 255}
 
+ApplicationStatus :: enum {
+    UNLOADED,
+    LOADED
+}
+
 State :: struct {
+    status: ApplicationStatus,
+    music: rl.Music,
+    loaded_files: [dynamic]string,
+    current_file: string,
     center : struct { x, y: f32},
-    percent, progress: f32,
+    length, percent, progress, previous_progress: f32,
     height, width: i32
 }
 
@@ -21,81 +32,139 @@ main :: proc() {
     rl.SetTargetFPS(60)
     rl.InitAudioDevice()
 
-    music : rl.Music = {}
-    music_length : f32
-    offset : f32 = 50
-    previous_progress : f32
-    
-    for !rl.WindowShouldClose() {
-        state := get_current_state(music, music_length)
+    state := init()
+    defer cleanup(&state)
 
+    for !rl.WindowShouldClose() {
         rl.BeginDrawing()
 
-        render(&music, state.center.x, state.center.y, offset, state.percent, state.height, state.width)
+        render(state)
 
         rl.EndDrawing()
-        rl.UpdateMusicStream(music)
+        rl.UpdateMusicStream(state.music)
 
-        handle_input(&music, state, &music_length)
+        handle_input(&state)
 
-        if state.progress < previous_progress {
-            rl.PauseMusicStream(music)
-            previous_progress = state.progress
+        if state.progress < state.previous_progress {
+            rl.PauseMusicStream(state.music)
+            state.previous_progress = state.progress
         }
 
-        if rl.IsMusicStreamPlaying(music) {
-            previous_progress = state.progress
+        if rl.IsMusicStreamPlaying(state.music) {
+            state.previous_progress = state.progress
         }
+
+        update(&state)
+    }
+
+}
+
+cleanup :: proc(state: ^State) {
+    for file in state.loaded_files {
+        delete(file)
+    }
+    delete(state.loaded_files)
+}
+
+load_music :: proc(state: ^State) {
+    filters := []cstring{ "*.mp3", "*.wav", "*.ogg", "*.qoa", "*.xm", "*.mod", "*.flac" }
+    file_name := tfd.tinyfd_openFileDialog("Select your Music", nil, i32(len(filters)), &filters[0], nil, 0)
+
+    if file_name == nil {
+        return
+    }
+
+    state.music = rl.LoadMusicStream(file_name)
+    for !rl.IsMusicReady(state.music) {}
+
+    state.status = ApplicationStatus.LOADED
+    state.length = rl.GetMusicTimeLength(state.music)
+
+    rl.PlayMusicStream(state.music)
+
+    file_str := strings.clone_from_cstring(file_name)
+
+    state.current_file = file_str
+
+    append(&state.loaded_files, file_str)
+}
+
+toggle_music :: proc(state: ^State) {
+    if rl.IsMusicStreamPlaying(state.music) {
+        rl.PauseMusicStream(state.music)
+    } else {
+        rl.ResumeMusicStream(state.music)
     }
 }
 
-handle_input :: proc(music: ^rl.Music, state: State, music_length: ^f32) {
+handle_input :: proc(state: ^State) {
+    // Always wanted keybinds
     if rl.IsKeyPressed(rl.KeyboardKey.O) {
-        file_name := tfd.tinyfd_openFileDialog("Select your Music", nil, 0, {} ,nil, 0)
-
-        if file_name == nil {
-            return
-        }
-
-        music^ = rl.LoadMusicStream(file_name)
-        for !rl.IsMusicReady(music^) {}
-        rl.PlayMusicStream(music^)
-        music_length^ = rl.GetMusicTimeLength(music^)
+        load_music(state)
     }   
 
-    if rl.IsKeyPressed(rl.KeyboardKey.SPACE) {
-        if rl.IsMusicStreamPlaying(music^) {
-            rl.PauseMusicStream(music^)
-        } else {
-            rl.ResumeMusicStream(music^)
-        }
+    // Keybinds depending upon application status
+    switch state.status {
+        case ApplicationStatus.UNLOADED:
+            if rl.IsMouseButtonPressed(rl.MouseButton.LEFT) {
+                load_music(state)
+            }
+        case ApplicationStatus.LOADED:
+            if rl.IsMouseButtonPressed(rl.MouseButton.LEFT) || rl.IsKeyPressed(rl.KeyboardKey.SPACE) || rl.IsKeyPressed(rl.KeyboardKey.K) {
+                toggle_music(state)
+            }
     }
-
 }
 
-get_current_state :: proc(music: rl.Music, music_length: f32) -> State {
-    current_progress := rl.GetMusicTimePlayed(music)
-    percent := current_progress / music_length
-    width := rl.GetScreenWidth()
+init :: proc() -> State {
     height := rl.GetScreenHeight()
-    center_x := cast(f32) width / 2;
-    center_y := cast(f32) height / 2;
-
-    //center : struct { x, y: f32},
-    //offset, percent, progress: f32,
-    //height, width: i32
-    return {{center_x, center_y}, percent, current_progress, height, width}
+    width := rl.GetScreenWidth()
+    return {
+        status = ApplicationStatus.UNLOADED,
+        music = {},
+        loaded_files = make([dynamic]string, 0, 32),
+        center = { f32(width) / 2, f32(height) / 2 },
+        length = 0, percent = 0, progress = 0, previous_progress = 0,
+        height = height, width = width
+    }
 }
 
-render :: proc(music: ^rl.Music, center_x, center_y, offset, percent: f32, height, width: i32) {
-    rl.ClearBackground(BACKGROUND_COLOR)
+update :: proc(state: ^State) {
+    state.progress = rl.GetMusicTimePlayed(state.music)
+    state.percent = state.progress / state.length
+    state.width = rl.GetScreenWidth()
+    state.height = rl.GetScreenHeight()
+    state.center = { x = f32(state.width) / 2, y = f32(state.height) / 2}
+}
 
-
-    if rl.IsMusicStreamPlaying(music^) {
-        rl.DrawRectangle(cast(i32)(center_x - offset), cast(i32)(center_y - offset), 50, 100, PLAY_PAUSE_COLOR)
-        rl.DrawRectangle(cast(i32)(center_x + offset), cast(i32)(center_y - offset), 50 ,100, PLAY_PAUSE_COLOR)
-    } else {
-        rl.DrawTriangle({center_x - offset, center_y - offset}, {center_x - offset, center_y + offset}, {center_x + offset, center_y}, PLAY_PAUSE_COLOR)
+render :: proc(state: State) {
+    offset : f32 = 50
+    draw_play :: proc(state: State, offset: f32) {
+        rl.DrawTriangle({state.center.x - offset, state.center.y - offset}, {state.center.x - offset, state.center.y + offset}, {state.center.x + offset, state.center.y}, PLAY_PAUSE_COLOR)
     }
-    rl.DrawRectangle(0, height - cast(i32)offset, cast(i32)(cast(f32)(width) * percent), 50,  PROGRESS_BAR_COLOR)
+    draw_pause :: proc(state: State, offset: f32) {
+        rl.DrawRectangle(i32(state.center.x - offset), i32(state.center.y - offset), 50, 100, PLAY_PAUSE_COLOR)
+        rl.DrawRectangle(i32(state.center.x + offset), i32(state.center.y - offset), 50 ,100, PLAY_PAUSE_COLOR)
+    }
+
+    rl.ClearBackground(BACKGROUND_COLOR)
+    FONT_SIZE :: 25
+    FONT_PADDING :: 5
+
+    switch state.status {
+        case ApplicationStatus.UNLOADED:
+            draw_play(state, offset)
+        case ApplicationStatus.LOADED:
+            c_file := strings.clone_to_cstring(state.current_file)
+            defer delete(c_file)
+            rl.DrawText(c_file, 0 + FONT_PADDING, 0 + FONT_PADDING, FONT_SIZE, PLAY_PAUSE_COLOR)
+
+            if rl.IsMusicStreamPlaying(state.music) {
+                draw_pause(state, offset)
+            } else {
+                draw_play(state, offset)
+            }
+    }
+
+    rl.DrawRectangle(0, state.height - i32(offset), i32(f32(state.width) * state.percent), i32(offset),  PROGRESS_BAR_COLOR)
 }
